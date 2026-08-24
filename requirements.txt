@@ -1,0 +1,10 @@
+django>=5.0
+djangorestframework
+djangorestframework-simplejwt
+django-cors-headers
+django-filter
+drf-spectacular
+pillow
+python-decouple
+celery
+firebase-admin
