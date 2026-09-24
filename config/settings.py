@@ -31,6 +31,7 @@ INSTALLED_APPS = [
       'apps.notifications',
       'apps.activity_logs',
       'apps.admin_dashboard',
+      'apps.synctool',
   ]
 
 MIDDLEWARE = [
@@ -63,12 +64,24 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
+_DB_ENGINE = config('DB_ENGINE', default='sqlite3')
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': f"django.db.backends.{_DB_ENGINE}",
+        'NAME': config('DB_NAME', default=BASE_DIR / 'db.sqlite3'),
+        'USER': config('DB_USER', default=''),
+        'PASSWORD': config('DB_PASSWORD', default=''),
+        'HOST': config('DB_HOST', default=''),
+        'PORT': config('DB_PORT', default=''),
     }
 }
+
+if _DB_ENGINE == 'postgresql':
+    # Isolate this project's tables in its own schema; keep 'public'
+    # (sync tables + other project's tables) untouched but reachable.
+    DATABASES['default']['OPTIONS'] = {
+        'options': '-c search_path=hypercity,public',
+    }
 
 AUTHENTICATION_BACKENDS = [
     'apps.accounts.authentication.PhoneAuthBackend',

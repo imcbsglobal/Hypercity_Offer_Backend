@@ -8,3 +8,4 @@ pillow
 python-decouple
 celery
 firebase-admin
+psycopg[binary]

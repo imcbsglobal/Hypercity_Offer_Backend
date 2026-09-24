@@ -15,6 +15,7 @@ urlpatterns = [
     path('api/notifications/', include('apps.notifications.urls')),
     path('api/activity-logs/', include('apps.activity_logs.urls')),
     path('api/dashboard/', include('apps.admin_dashboard.urls')),
+    path('api/synctool/', include('apps.synctool.urls')),
 
     # Swagger docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
