@@ -149,6 +149,21 @@ SPECTACULAR_SETTINGS = {
 # Firebase
 FIREBASE_CREDENTIALS_PATH = config('FIREBASE_CREDENTIALS_PATH', default='')
 
+# SMS (IMCBS / RITS v1.0)
+SMS_ENABLED = config('SMS_ENABLED', default=False, cast=bool)
+SMS_API_BASE_URL = config('SMS_API_BASE_URL', default='https://sms.imcbs.com/api/sms/v1.0')
+SMS_API_ACCOUNT_URL = config('SMS_API_ACCOUNT_URL', default='https://sms.imcbs.com/api/account/v1.0')
+SMS_ACCESS_TOKEN = config('SMS_ACCESS_TOKEN', default='')
+SMS_ACCESS_TOKEN_KEY = config('SMS_ACCESS_TOKEN_KEY', default='')
+SMS_SENDER_ID = config('SMS_SENDER_ID', default='')
+SMS_DLT_TEMPLATE_ID = config('SMS_DLT_TEMPLATE_ID', default='')
+SMS_OTP_TEMPLATE = config('SMS_OTP_TEMPLATE', default='')
+SMS_OTP_EXPIRY_MINUTES = config('SMS_OTP_EXPIRY_MINUTES', default=5, cast=int)
+SMS_MAX_ATTEMPTS = config('SMS_MAX_ATTEMPTS', default=5, cast=int)
+SMS_RESEND_COOLDOWN = config('SMS_RESEND_COOLDOWN', default=60, cast=int)
+SMS_SIGNATURE_TTL = config('SMS_SIGNATURE_TTL', default=60, cast=int)
+SMS_REQUEST_TIMEOUT = config('SMS_REQUEST_TIMEOUT', default=10, cast=int)
+
 # Celery
 CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
 CELERY_ACCEPT_CONTENT = ['json']

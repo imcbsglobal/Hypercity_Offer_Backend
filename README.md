@@ -7,10 +7,11 @@ Django REST backend for Hypercity supermarket offer management. Provides admin p
 | Layer | Technology |
 |-------|-----------|
 | Framework | Django 6.0 + Django REST Framework |
-| Auth | JWT (cust OTP) + Django Admin (staff) |
+| Auth | JWT (cust OTP + SMS) + Django Admin (staff) |
 | Database | SQLite (dev), upgradeable to PostgreSQL |
 | Task Queue | Celery + Redis (async push, offer expiry) |
 | Push | Firebase Cloud Messaging |
+| SMS | IMCBS / RITS API v1.0 (OTP delivery) |
 | Docs | Swagger (drf-spectacular) |
 
 ## Project Structure
@@ -22,11 +23,14 @@ backend/
 │   ├── celery.py           # Celery app config
 │   └── __init__.py
 ├── apps/
-│   ├── accounts/           # User model, OTP auth, JWT, role permissions
+│   ├── accounts/           # User model, OTP auth, SMS client, JWT, role permissions
 │   ├── branches/           # Branch CRUD
 │   ├── offers/             # Offer CRUD with branch assignment
 │   ├── banners/            # Banner CRUD with scheduling
-│   └── notifications/      # FCM push + user notification history
+│   ├── notifications/      # FCM push + user notification history
+│   ├── activity_logs/      # Audit trail of create/update/delete/login
+│   ├── admin_dashboard/    # Aggregated dashboard metrics
+│   └── synctool/           # Read-only mirrors of the legacy ERP sync tables
 ├── media/                  # Uploaded images (offers, banners, branches)
 ├── manage.py
 ├── .env                    # Environment configuration
@@ -147,6 +151,39 @@ JWT_ACCESS_TOKEN_LIFETIME=60
 JWT_REFRESH_TOKEN_LIFETIME=1440
 FIREBASE_CREDENTIALS_PATH=
 CELERY_BROKER_URL=redis://localhost:6379/0
+```
+
+### SMS (IMCBS / RITS v1.0)
+
+OTP delivery goes through `https://sms.imcbs.com/api/sms/v1.0`. Requests are signed with the
+documented MD5 chain in `apps/accounts/sms.py`.
+
+```
+SMS_ENABLED=True
+SMS_ACCESS_TOKEN=<from SMS panel>
+SMS_ACCESS_TOKEN_KEY=<from SMS panel, secret>
+SMS_SENDER_ID=HYPER
+SMS_DLT_TEMPLATE_ID=                  # only if DLT template matching is enforced
+SMS_OTP_TEMPLATE=Your Hypercity OTP is {otp}. Valid for {minutes} minutes.
+SMS_OTP_EXPIRY_MINUTES=5
+SMS_MAX_ATTEMPTS=5
+SMS_RESEND_COOLDOWN=60
+SMS_REQUEST_TIMEOUT=10
+```
+
+With `SMS_ENABLED=False` (or missing credentials) the client runs in stub mode: the message is
+printed to the console and logged to `SMSSendLog`, and `send-otp` returns the generated code in
+the response **only when `DEBUG=True`**. Never enable the stub in production - it is an auth bypass.
+
+Every outbound SMS is recorded in `SMSSendLog` (phone, body, HTTP status, provider message,
+`submissionId`) and visible in `/admin/accounts/smssendlog/`. Check it first when SMS are not
+arriving; a 402 means the wallet needs a top-up and 403 usually means a blocked template/header.
+
+Housekeeping:
+
+```bash
+python manage.py purge_otp            # delete used/expired OTPs, trim SMS logs older than 30 days
+python manage.py purge_otp --dry-run
 ```
 
 ## Celery (for async tasks)

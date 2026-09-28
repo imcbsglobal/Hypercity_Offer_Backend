@@ -20,6 +20,8 @@ POST /api/auth/send-otp/
 ```
 **Auth:** Public
 
+Sends a 6-digit OTP to the customer's registered phone number via the IMCBS SMS API. The number must exist in the ERP customer master (`acc_master_sync.phone2`) - only the last 10 digits are compared.
+
 **Request:**
 ```json
 {
@@ -30,15 +32,36 @@ POST /api/auth/send-otp/
 **Response 200:**
 ```json
 {
-  "message": "OTP sent successfully",
-  "otp": "4574"
+  "message": "OTP sent successfully"
 }
 ```
+
+> In local development with `DEBUG=True` and `SMS_ENABLED=False`, the response also includes `"otp": "123456"` so you can test without an SMS gateway. This field is never returned when the SMS provider is configured.
 
 **Response 400:**
 ```json
 {
   "phone": ["Invalid phone number"]
+}
+```
+
+```json
+{
+  "error": "No customer account found with this number. Please contact admin."
+}
+```
+
+**Response 429** - resend requested too soon (default cooldown 60s):
+```json
+{
+  "error": "Please wait 42 seconds before requesting a new OTP."
+}
+```
+
+**Response 502** - provider rejected or failed to send (e.g. 402 low balance, 403 blocked template):
+```json
+{
+  "error": "Could not send OTP. Please try again later."
 }
 ```
 
@@ -49,13 +72,13 @@ POST /api/auth/send-otp/
 POST /api/auth/verify-otp/
 ```
 **Auth:** Public  
-**Note:** For existing users only. New users should use `/api/auth/signup/`.
+**Note:** A known customer with no user record is auto-created as `CUSTOMER` on first successful verification.
 
 **Request:**
 ```json
 {
   "phone": "9876543210",
-  "otp": "4574"
+  "otp": "123456"
 }
 ```
 
@@ -69,7 +92,7 @@ POST /api/auth/verify-otp/
     "phone": "9876543210",
     "name": "User",
     "is_customer": true,
-    "role": "SUPER_ADMIN"
+    "role": "CUSTOMER"
   }
 }
 ```
@@ -89,9 +112,17 @@ POST /api/auth/verify-otp/
 
 ```json
 {
+  "error": "Too many incorrect attempts. Please request a new OTP."
+}
+```
+
+```json
+{
   "error": "Account not found. Please signup first."
 }
 ```
+
+> An OTP is single-use. After `SMS_MAX_ATTEMPTS` (default 5) wrong codes the row is deleted and the number must request a new OTP.
 
 ---
 
@@ -106,7 +137,7 @@ POST /api/auth/signup/
 ```json
 {
   "phone": "9876543210",
-  "otp": "4574",
+  "otp": "123456",
   "name": "John Doe"
 }
 ```
@@ -142,7 +173,6 @@ POST /api/auth/signup/
 ```json
 {
   "error": "OTP expired"
-}
 ```
 
 ```json

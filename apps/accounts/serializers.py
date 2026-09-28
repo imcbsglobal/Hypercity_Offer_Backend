@@ -14,12 +14,12 @@ class SendOTPSerializer(serializers.Serializer):
 
 class VerifyOTPSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
-    otp = serializers.CharField(max_length=6)
+    otp = serializers.CharField(min_length=6, max_length=6)
 
 
 class SignupSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
-    otp = serializers.CharField(max_length=6)
+    otp = serializers.CharField(min_length=6, max_length=6)
     name = serializers.CharField(max_length=100)
 
     def validate_phone(self, value):

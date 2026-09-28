@@ -5,6 +5,7 @@ django-cors-headers
 django-filter
 drf-spectacular
 pillow
+requests
 python-decouple
 celery
 firebase-admin

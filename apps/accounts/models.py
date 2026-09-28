@@ -1,5 +1,7 @@
+from django.contrib.auth.hashers import check_password, make_password
 from django.contrib.auth.models import AbstractUser, UserManager as BaseUserManager
 from django.db import models
+from django.utils import timezone
 
 
 class UserManager(BaseUserManager):
@@ -57,13 +59,44 @@ class User(AbstractUser):
 
 
 class OTP(models.Model):
-    phone = models.CharField(max_length=15)
-    otp = models.CharField(max_length=6)
+    phone = models.CharField(max_length=15, db_index=True)
+    otp = models.CharField(max_length=128)
     created_at = models.DateTimeField(auto_now_add=True)
-    is_verified = models.BooleanField(default=False)
+    expires_at = models.DateTimeField()
+    attempts = models.PositiveSmallIntegerField(default=0)
+    is_used = models.BooleanField(default=False)
+    sms_submission_id = models.CharField(max_length=100, blank=True)
 
     class Meta:
         ordering = ['-created_at']
+        indexes = [models.Index(fields=['phone', '-created_at'])]
 
     def __str__(self):
-        return f"{self.phone} - {self.otp}"
+        return f"{self.phone} - {'used' if self.is_used else 'pending'}"
+
+    @property
+    def is_expired(self):
+        return timezone.now() > self.expires_at
+
+    def set_code(self, code):
+        self.otp = make_password(code)
+
+    def check_code(self, code):
+        return check_password(code, self.otp)
+
+
+class SMSSendLog(models.Model):
+    phone = models.CharField(max_length=15, db_index=True)
+    body = models.TextField()
+    success = models.BooleanField(default=False)
+    status_code = models.IntegerField(null=True, blank=True)
+    provider_message = models.TextField(blank=True)
+    submission_id = models.CharField(max_length=100, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        indexes = [models.Index(fields=['-created_at'])]
+
+    def __str__(self):
+        return f"{self.phone} - {'ok' if self.success else 'failed'} - {self.created_at}"

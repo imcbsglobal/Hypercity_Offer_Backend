@@ -1,7 +1,8 @@
-import random
 import re
+import secrets
 from datetime import timedelta
 
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import status, generics, permissions, viewsets
 from rest_framework.response import Response
@@ -18,28 +19,78 @@ from .serializers import (
     UpdateFCMTokenSerializer
 )
 from .permissions import IsSuperAdmin
+from .sms import build_otp_message, is_enabled as sms_enabled, send_sms
 from apps.activity_logs.utils import log_activity
 
 
 def generate_otp():
-    return str(random.randint(1000, 9999))
+    return f'{secrets.randbelow(1000000):06d}'
 
 
 def _normalize_phone(value):
     return re.sub(r'\D', '', value or '')
 
 
+def _last_ten_digits(value):
+    digits = _normalize_phone(value)
+    return digits[-10:] if len(digits) >= 10 else ''
+
+
 def is_known_customer(phone):
-    digits = _normalize_phone(phone)
-    if len(digits) < 10:
+    digits = _last_ten_digits(phone)
+    if not digits:
         return False
-    digits = digits[-10:]
     from apps.synctool.models import AccMaster
-    phone2_list = (
-        AccMaster.objects.exclude(phone2__isnull=True).exclude(phone2='')
-        .values_list('phone2', flat=True)
+    return (
+        AccMaster.objects.exclude(phone2__isnull=True)
+        .exclude(phone2='')
+        .filter(phone2__endswith=digits)
+        .exists()
     )
-    return any(_normalize_phone(p) == digits for p in phone2_list)
+
+
+def _token_payload(user):
+    refresh = RefreshToken.for_user(user)
+    return {
+        'access': str(refresh.access_token),
+        'refresh': str(refresh),
+        'user': {
+            'id': user.id,
+            'phone': user.phone,
+            'name': user.name,
+            'is_customer': user.is_customer,
+            'role': user.role,
+        }
+    }
+
+
+def _get_valid_otp(phone, code):
+    entry = OTP.objects.filter(phone=phone, is_used=False).order_by('-created_at').first()
+    if not entry:
+        return None, 'Invalid OTP'
+
+    if entry.is_expired:
+        entry.delete()
+        return None, 'OTP expired'
+
+    if entry.attempts >= settings.SMS_MAX_ATTEMPTS:
+        entry.delete()
+        return None, 'Too many incorrect attempts. Please request a new OTP.'
+
+    if not entry.check_code(code):
+        entry.attempts += 1
+        entry.save(update_fields=['attempts'])
+        if entry.attempts >= settings.SMS_MAX_ATTEMPTS:
+            entry.delete()
+            return None, 'Too many incorrect attempts. Please request a new OTP.'
+        return None, 'Invalid OTP'
+
+    return entry, None
+
+
+def _consume_otp(entry):
+    entry.is_used = True
+    entry.save(update_fields=['is_used'])
 
 
 class SendOTPView(APIView):
@@ -50,7 +101,7 @@ class SendOTPView(APIView):
     def post(self, request):
         serializer = SendOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        phone = serializer.validated_data['phone']
+        phone = _last_ten_digits(serializer.validated_data['phone'])
 
         if not is_known_customer(phone):
             return Response(
@@ -58,15 +109,41 @@ class SendOTPView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        OTP.objects.filter(phone=phone, is_verified=False).delete()
+        last_sent = OTP.objects.filter(phone=phone).order_by('-created_at').first()
+        if last_sent:
+            elapsed = (timezone.now() - last_sent.created_at).total_seconds()
+            if elapsed < settings.SMS_RESEND_COOLDOWN:
+                wait = int(settings.SMS_RESEND_COOLDOWN - elapsed) + 1
+                return Response(
+                    {'error': f'Please wait {wait} seconds before requesting a new OTP.'},
+                    status=status.HTTP_429_TOO_MANY_REQUESTS,
+                )
 
-        otp_code = generate_otp()
-        OTP.objects.create(phone=phone, otp=otp_code)
+        code = generate_otp()
+        entry = OTP.objects.create(
+            phone=phone,
+            otp='',
+            expires_at=timezone.now() + timedelta(minutes=settings.SMS_OTP_EXPIRY_MINUTES),
+        )
+        entry.set_code(code)
+        entry.save(update_fields=['otp'])
 
-        # In production: send via SMS gateway (Twilio, MSG91, etc.)
-        print(f"OTP for {phone}: {otp_code}")
+        result = send_sms(phone, build_otp_message(code))
+        if sms_enabled() and not result['ok']:
+            entry.delete()
+            return Response(
+                {'error': 'Could not send OTP. Please try again later.'},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
 
-        return Response({'message': 'OTP sent successfully', 'otp': otp_code}, status=status.HTTP_200_OK)
+        if result['submission_id']:
+            entry.sms_submission_id = result['submission_id'][:100]
+            entry.save(update_fields=['sms_submission_id'])
+
+        data = {'message': 'OTP sent successfully'}
+        if settings.DEBUG and not sms_enabled():
+            data['otp'] = code
+        return Response(data, status=status.HTTP_200_OK)
 
 
 class VerifyOTPView(APIView):
@@ -78,22 +155,14 @@ class VerifyOTPView(APIView):
         serializer = VerifyOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        phone = serializer.validated_data['phone']
+        phone = _last_ten_digits(serializer.validated_data['phone'])
         otp_code = serializer.validated_data['otp']
 
-        otp_entry = OTP.objects.filter(
-            phone=phone, otp=otp_code, is_verified=False
-        ).first()
+        otp_entry, error = _get_valid_otp(phone, otp_code)
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
-        if not otp_entry:
-            return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if timezone.now() > otp_entry.created_at + timedelta(minutes=5):
-            otp_entry.delete()
-            return Response({'error': 'OTP expired'}, status=status.HTTP_400_BAD_REQUEST)
-
-        otp_entry.is_verified = True
-        otp_entry.save()
+        _consume_otp(otp_entry)
 
         try:
             user = User.objects.get(phone=phone)
@@ -107,18 +176,7 @@ class VerifyOTPView(APIView):
                 is_customer=True,
             )
 
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'user': {
-                'id': user.id,
-                'phone': user.phone,
-                'name': user.name,
-                'is_customer': user.is_customer,
-                'role': user.role,
-            }
-        }, status=status.HTTP_200_OK)
+        return Response(_token_payload(user), status=status.HTTP_200_OK)
 
 
 class SignupView(APIView):
@@ -130,26 +188,18 @@ class SignupView(APIView):
         serializer = SignupSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        phone = serializer.validated_data['phone']
+        phone = _last_ten_digits(serializer.validated_data['phone'])
         otp_code = serializer.validated_data['otp']
         name = serializer.validated_data['name']
 
-        otp_entry = OTP.objects.filter(
-            phone=phone, otp=otp_code, is_verified=False
-        ).first()
-
-        if not otp_entry:
-            return Response({'error': 'Invalid OTP'}, status=status.HTTP_400_BAD_REQUEST)
-
-        if timezone.now() > otp_entry.created_at + timedelta(minutes=5):
-            otp_entry.delete()
-            return Response({'error': 'OTP expired'}, status=status.HTTP_400_BAD_REQUEST)
+        otp_entry, error = _get_valid_otp(phone, otp_code)
+        if error:
+            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
         if User.objects.filter(phone=phone).exists():
             return Response({'error': 'Account already exists. Please login.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        otp_entry.is_verified = True
-        otp_entry.save()
+        _consume_otp(otp_entry)
 
         user = User.objects.create_user(
             phone=phone,
@@ -158,18 +208,7 @@ class SignupView(APIView):
             is_customer=True,
         )
 
-        refresh = RefreshToken.for_user(user)
-        return Response({
-            'access': str(refresh.access_token),
-            'refresh': str(refresh),
-            'user': {
-                'id': user.id,
-                'phone': user.phone,
-                'name': user.name,
-                'is_customer': user.is_customer,
-                'role': user.role,
-            }
-        }, status=status.HTTP_201_CREATED)
+        return Response(_token_payload(user), status=status.HTTP_201_CREATED)
 
 
 class AdminLoginView(APIView):
