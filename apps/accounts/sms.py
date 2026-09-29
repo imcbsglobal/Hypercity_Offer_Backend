@@ -57,6 +57,8 @@ def is_enabled():
 
 def build_otp_message(otp):
     template = settings.SMS_OTP_TEMPLATE or DEFAULT_OTP_TEMPLATE
+    # DLT-approved IMCBS templates commonly use {#num#} for OTP variables.
+    template = template.replace('{#num#}', otp)
     return template.format(otp=otp, minutes=settings.SMS_OTP_EXPIRY_MINUTES)
 
 

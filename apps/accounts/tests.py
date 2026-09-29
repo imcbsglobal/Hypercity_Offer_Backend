@@ -256,6 +256,12 @@ class SendSmsClientTests(TestCase):
         with override_settings(SMS_OTP_TEMPLATE='Code {otp} in {minutes}m', SMS_OTP_EXPIRY_MINUTES=4):
             self.assertEqual(build_otp_message('123456'), 'Code 123456 in 4m')
 
+    def test_build_otp_message_supports_dlt_number_placeholder(self):
+        from apps.accounts.sms import build_otp_message
+
+        with override_settings(SMS_OTP_TEMPLATE='Your OTP is {#num#}.', SMS_OTP_EXPIRY_MINUTES=5):
+            self.assertEqual(build_otp_message('123456'), 'Your OTP is 123456.')
+
     def test_build_otp_message_falls_back_to_default(self):
         from apps.accounts.sms import build_otp_message
 
