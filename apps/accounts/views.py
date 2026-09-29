@@ -36,19 +36,6 @@ def _last_ten_digits(value):
     return digits[-10:] if len(digits) >= 10 else ''
 
 
-def is_known_customer(phone):
-    digits = _last_ten_digits(phone)
-    if not digits:
-        return False
-    from apps.synctool.models import AccMaster
-    return (
-        AccMaster.objects.exclude(phone2__isnull=True)
-        .exclude(phone2='')
-        .filter(phone2__endswith=digits)
-        .exists()
-    )
-
-
 def _token_payload(user):
     refresh = RefreshToken.for_user(user)
     return {
@@ -102,12 +89,6 @@ class SendOTPView(APIView):
         serializer = SendOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         phone = _last_ten_digits(serializer.validated_data['phone'])
-
-        if not is_known_customer(phone):
-            return Response(
-                {'error': 'No customer account found with this number. Please contact admin.'},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
 
         last_sent = OTP.objects.filter(phone=phone).order_by('-created_at').first()
         if last_sent:
@@ -167,8 +148,6 @@ class VerifyOTPView(APIView):
         try:
             user = User.objects.get(phone=phone)
         except User.DoesNotExist:
-            if not is_known_customer(phone):
-                return Response({'error': 'Account not found. Please signup first.'}, status=status.HTTP_400_BAD_REQUEST)
             user = User.objects.create_user(
                 phone=phone,
                 name='Customer',

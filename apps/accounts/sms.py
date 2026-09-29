@@ -15,10 +15,10 @@ GET_WALLET_BALANCE_REQUEST_FOR = 'get-wallet-balance'
 GET_WALLET_TRANSACTIONS_REQUEST_FOR = 'get-wallet-transactions'
 GET_DELIVERY_REPORT_REQUEST_FOR = 'get-delivery-report'
 
-# Body field names expected by the panel. Renamed here if the account uses aliases.
-FIELD_SOURCE = 'sourceAddr'
-FIELD_DESTINATION = 'destinationAddr'
-FIELD_MESSAGE = 'message'
+# Body field names for the send-sms endpoint.
+FIELD_HEADER = 'smsHeader'
+FIELD_MESSAGE = 'messageContent'
+FIELD_RECIPIENTS = 'recipients'
 
 DEFAULT_OTP_TEMPLATE = 'Your Hypercity OTP is {otp}. Valid for {minutes} minutes.'
 
@@ -80,6 +80,18 @@ def _extract(body, keys):
     return ''
 
 
+def _extract_submission_id(body):
+    # Success responses nest the id: {"status":"success","data":{"submissionId":...}}
+    if not isinstance(body, dict):
+        return ''
+    data = body.get('data')
+    if isinstance(data, dict):
+        found = _extract(data, SUBMISSION_ID_KEYS)
+        if found:
+            return found
+    return _extract(body, SUBMISSION_ID_KEYS)
+
+
 def _log_send(phone, message, result):
     from .models import SMSSendLog
 
@@ -95,12 +107,16 @@ def _log_send(phone, message, result):
 
 def _send_sms_payload(phone, message, request_for):
     payload = {
-        FIELD_SOURCE: settings.SMS_SENDER_ID,
-        FIELD_DESTINATION: phone,
+        'route': settings.SMS_ROUTE,
+        FIELD_HEADER: settings.SMS_SENDER_ID,
         FIELD_MESSAGE: message,
+        FIELD_RECIPIENTS: phone,
+        'contentType': settings.SMS_CONTENT_TYPE,
     }
+    if settings.SMS_DLT_ENTITY_ID:
+        payload['entityId'] = settings.SMS_DLT_ENTITY_ID
     if settings.SMS_DLT_TEMPLATE_ID:
-        payload['dltTemplateId'] = settings.SMS_DLT_TEMPLATE_ID
+        payload['templateId'] = settings.SMS_DLT_TEMPLATE_ID
     payload.update(build_auth_fields(request_for))
     return payload
 
@@ -130,11 +146,12 @@ def send_sms(phone, message, request_for=SEND_SMS_REQUEST_FOR, log=True):
     except ValueError:
         body = None
 
+    status_field = _extract(body, ('status',)).lower()
     result = _result(
-        ok=response.status_code == 200,
+        ok=response.status_code == 200 and status_field in ('', 'success'),
         status_code=response.status_code,
         message=_extract(body, ('message', 'status')) or response.text[:500],
-        submission_id=_extract(body, SUBMISSION_ID_KEYS),
+        submission_id=_extract_submission_id(body),
         body=body,
     )
     if log:

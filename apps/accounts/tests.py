@@ -12,21 +12,6 @@ from apps.accounts.sms import build_signature
 from apps.accounts.views import generate_otp
 
 PHONE = '9876543210'
-KNOWN_CUSTOMER_PATH = 'apps.accounts.views.is_known_customer'
-
-
-def known_customer(phone):
-    return True
-
-
-class KnownCustomerMixin:
-    """Patches is_known_customer for the whole test, including setUp."""
-
-    def setUp(self):
-        patcher = patch(KNOWN_CUSTOMER_PATH, known_customer)
-        patcher.start()
-        self.addCleanup(patcher.stop)
-        super().setUp()
 
 
 def make_otp(phone=PHONE, code='123456', minutes_left=5):
@@ -81,7 +66,7 @@ class GenerateOTPTests(TestCase):
     SMS_OTP_EXPIRY_MINUTES=5,
     SMS_MAX_ATTEMPTS=3,
 )
-class SendOTPViewTests(KnownCustomerMixin, TestCase):
+class SendOTPViewTests(TestCase):
     url = reverse('send-otp')
 
     def setUp(self):
@@ -126,11 +111,10 @@ class SendOTPViewTests(KnownCustomerMixin, TestCase):
         res = self.client.post(self.url, {'phone': PHONE}, format='json')
         self.assertEqual(res.status_code, 200)
 
-    def test_unknown_phone_rejected(self):
-        with patch(KNOWN_CUSTOMER_PATH, return_value=False):
-            res = self.client.post(self.url, {'phone': '9000000002'}, format='json')
-        self.assertEqual(res.status_code, 400)
-        self.assertFalse(OTP.objects.filter(phone='9000000002').exists())
+    def test_arbitrary_phone_is_allowed(self):
+        res = self.client.post(self.url, {'phone': '9000000002'}, format='json')
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(OTP.objects.filter(phone='9000000002').exists())
 
     def test_invalid_phone_rejected_by_serializer(self):
         res = self.client.post(self.url, {'phone': '123'}, format='json')
@@ -156,7 +140,7 @@ class SendOTPViewTests(KnownCustomerMixin, TestCase):
 
 
 @override_settings(SMS_ENABLED=False, DEBUG=True, SMS_MAX_ATTEMPTS=3, SMS_OTP_EXPIRY_MINUTES=5)
-class VerifyOTPViewTests(KnownCustomerMixin, TestCase):
+class VerifyOTPViewTests(TestCase):
     url = reverse('verify-otp')
 
     def setUp(self):
@@ -170,7 +154,7 @@ class VerifyOTPViewTests(KnownCustomerMixin, TestCase):
         self.entry.refresh_from_db()
         self.assertTrue(self.entry.is_used)
 
-    def test_known_customer_gets_auto_created(self):
+    def test_new_phone_gets_auto_created(self):
         res = self.client.post(self.url, {'phone': PHONE, 'otp': '123456'}, format='json')
         self.assertEqual(res.status_code, 200)
         user = User.objects.get(phone=PHONE)
@@ -291,7 +275,9 @@ class SendSmsEnabledTests(TestCase):
     def test_successful_send_passes_auth_fields(self):
         from apps.accounts.sms import send_sms
 
-        response = self._response(200, {'submissionId': 'abc123', 'message': 'sent'})
+        response = self._response(200, {'status': 'success',
+                                         'data': {'submissionId': 'abc123'},
+                                         'message': 'Sent.'})
         with patch('apps.accounts.sms.requests.post', return_value=response) as post:
             result = send_sms(PHONE, 'hello')
 
@@ -300,12 +286,27 @@ class SendSmsEnabledTests(TestCase):
 
         body = post.call_args.kwargs['data']
         self.assertEqual(body['accessToken'], 'TOKEN')
-        self.assertEqual(body['sourceAddr'], 'HYPER')
-        self.assertEqual(body['destinationAddr'], PHONE)
+        self.assertEqual(body['smsHeader'], 'HYPER')
+        self.assertEqual(body['recipients'], PHONE)
+        self.assertEqual(body['messageContent'], 'hello')
+        self.assertEqual(body['route'], 'transactional')
         self.assertEqual(len(body['authSignature']), 32)
         self.assertGreater(body['expire'], 0)
         self.assertTrue(post.call_args.args[0].endswith('/send-sms'))
         self.assertEqual(SMSSendLog.objects.first().submission_id, 'abc123')
+
+    def test_dlt_fields_sent_when_configured(self):
+        from apps.accounts.sms import send_sms
+
+        response = self._response(200, {'status': 'success', 'data': {'submissionId': 'x'}})
+        with override_settings(SMS_DLT_ENTITY_ID='ENT1', SMS_DLT_TEMPLATE_ID='TPL1'):
+            with patch('apps.accounts.sms.requests.post', return_value=response) as post:
+                send_sms(PHONE, 'hello')
+
+        body = post.call_args.kwargs['data']
+        self.assertEqual(body['entityId'], 'ENT1')
+        self.assertEqual(body['templateId'], 'TPL1')
+        self.assertNotIn('dltTemplateId', body)
 
     def test_provider_error_is_reported(self):
         from apps.accounts.sms import send_sms
