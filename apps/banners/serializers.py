@@ -5,7 +5,8 @@ from .models import Banner
 class BannerListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Banner
-        fields = ['id', 'title', 'image', 'link_url', 'linked_offer', 'order', 'is_active']
+        fields = ['id', 'title', 'image', 'link_url', 'linked_offer', 'branches',
+                  'start_date', 'end_date', 'order', 'is_active']
 
 
 class BannerDetailSerializer(serializers.ModelSerializer):

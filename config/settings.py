@@ -29,6 +29,7 @@ INSTALLED_APPS = [
     'apps.offers',
       'apps.banners',
       'apps.notifications',
+      'apps.custom_forms',
       'apps.activity_logs',
       'apps.admin_dashboard',
       'apps.synctool',
@@ -147,7 +148,14 @@ SPECTACULAR_SETTINGS = {
 }
 
 # Firebase
-FIREBASE_CREDENTIALS_PATH = config('FIREBASE_CREDENTIALS_PATH', default='')
+_fb_path = config('FIREBASE_CREDENTIALS_PATH', default='')
+FIREBASE_CREDENTIALS_PATH = (
+    str((BASE_DIR / _fb_path).resolve())
+    if _fb_path and not Path(_fb_path).is_absolute()
+    else _fb_path
+)
+PUBLIC_BASE_URL = config('PUBLIC_BASE_URL', default='').rstrip('/')
+PUBLIC_FRONTEND_URL = config('PUBLIC_FRONTEND_URL', default='').rstrip('/')
 
 # SMS (IMCBS / RITS v1.0)
 SMS_ENABLED = config('SMS_ENABLED', default=False, cast=bool)
@@ -166,20 +174,3 @@ SMS_MAX_ATTEMPTS = config('SMS_MAX_ATTEMPTS', default=5, cast=int)
 SMS_RESEND_COOLDOWN = config('SMS_RESEND_COOLDOWN', default=60, cast=int)
 SMS_SIGNATURE_TTL = config('SMS_SIGNATURE_TTL', default=60, cast=int)
 SMS_REQUEST_TIMEOUT = config('SMS_REQUEST_TIMEOUT', default=10, cast=int)
-
-# Celery
-CELERY_BROKER_URL = config('CELERY_BROKER_URL', default='redis://localhost:6379/0')
-CELERY_ACCEPT_CONTENT = ['json']
-CELERY_TASK_SERIALIZER = 'json'
-
-# Celery Beat
-CELERY_BEAT_SCHEDULE = {
-    'activate-scheduled-offers': {
-        'task': 'apps.notifications.tasks.activate_scheduled_offers',
-        'schedule': timedelta(minutes=1),
-    },
-    'deactivate-expired-offers': {
-        'task': 'apps.notifications.tasks.deactivate_expired_offers',
-        'schedule': timedelta(minutes=1),
-    },
-}

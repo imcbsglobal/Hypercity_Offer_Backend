@@ -66,7 +66,7 @@ class UserListSerializer(serializers.ModelSerializer):
 
 
 class StaffCreateSerializer(serializers.ModelSerializer):
-    password = serializers.CharField(write_only=True, required=False)
+    password = serializers.CharField(write_only=True, required=False, min_length=8)
 
     class Meta:
         model = User

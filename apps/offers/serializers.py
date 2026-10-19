@@ -44,8 +44,27 @@ class OfferCreateSerializer(serializers.ModelSerializer):
         fields = ['title', 'description', 'image',
                   'start_date', 'end_date', 'terms_conditions', 'branch_ids', 'is_active']
 
+    def validate(self, data):
+        errors = {}
+        if self.instance:
+            # Editing an offer must always provide both dates, even for a
+            # partial API update.
+            if not data.get('start_date'):
+                errors['start_date'] = 'Start date is required when updating an offer.'
+            if not data.get('end_date'):
+                errors['end_date'] = 'End date is required when updating an offer.'
+
+        start_date = data.get('start_date')
+        end_date = data.get('end_date')
+        if start_date and end_date and start_date >= end_date:
+            errors['end_date'] = 'End date must be after start date.'
+
+        if errors:
+            raise serializers.ValidationError(errors)
+        return data
+
     def create(self, validated_data):
-        branch_ids = validated_data.pop('branch_ids')
+        branch_ids = validated_data.pop('branch_ids', [])
         start = validated_data.get('start_date')
         if start and start > timezone.now():
             validated_data['is_active'] = False

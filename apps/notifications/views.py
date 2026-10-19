@@ -27,7 +27,7 @@ class NotificationViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         notification = serializer.save(created_by=self.request.user)
-        send_notification_push.delay(notification.id)
+        send_notification_push(notification.id)
 
     @action(detail=False, methods=['get'])
     def my(self, request):

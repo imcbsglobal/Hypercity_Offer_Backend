@@ -43,3 +43,7 @@ htmlcov/
 # OS files
 .DS_Store
 Thumbs.db
+
+# Firebase service account
+apps/firebase/*.json
+

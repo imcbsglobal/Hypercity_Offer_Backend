@@ -24,6 +24,12 @@ class BranchViewSet(viewsets.ModelViewSet):
         if is_active is not None:
             qs = qs.filter(is_active=is_active.lower() == 'true')
 
+        branch_id = self.request.query_params.get('branch_id')
+        if branch_id is not None:
+            if not branch_id.isdigit():
+                return qs.none()
+            qs = qs.filter(id=branch_id)
+
         return qs
 
     def get_permissions(self):

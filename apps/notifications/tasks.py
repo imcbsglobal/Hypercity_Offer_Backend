@@ -1,12 +1,21 @@
-from celery import shared_task
 from django.utils import timezone
+from django.conf import settings
 from .models import Notification, UserNotification
 from .fcm import send_bulk_push
 from apps.accounts.models import User
 from apps.offers.models import Offer
 
 
-@shared_task
+def notification_image_url(notification):
+    if not notification.image or not settings.PUBLIC_BASE_URL:
+        return ''
+
+    image_url = notification.image.url
+    if image_url.startswith(('http://', 'https://')):
+        return image_url
+    return f"{settings.PUBLIC_BASE_URL}/{image_url.lstrip('/')}"
+
+
 def send_notification_push(notification_id):
     try:
         notif = Notification.objects.get(id=notification_id, is_active=True)
@@ -19,17 +28,24 @@ def send_notification_push(notification_id):
         users = users.filter(preferred_branches__in=notif.target_branches.all()).distinct()
 
     tokens = list(users.values_list('fcm_token', flat=True))
+    print(f"[Notifications] Notification #{notif.id}: {len(tokens)} eligible FCM token(s).")
+    if not tokens:
+        print('[Notifications] Push skipped because no eligible users have an FCM token.')
+        return
+
     data = {}
     if notif.type == 'OFFER' and notif.linked_offer_id:
         data['offer_id'] = str(notif.linked_offer_id)
+    image_url = notification_image_url(notif)
+    if image_url:
+        data['image_url'] = image_url
 
-    send_bulk_push(tokens, notif.title, notif.body, data)
+    send_bulk_push(tokens, notif.title, notif.body, data, image_url=image_url)
 
     for user in users:
         UserNotification.objects.get_or_create(user=user, notification=notif)
 
 
-@shared_task
 def activate_scheduled_offers():
     now = timezone.now()
     scheduled = Offer.objects.filter(
@@ -51,13 +67,9 @@ def activate_scheduled_offers():
             users = users.filter(preferred_branches__in=branch_ids).distinct()
 
         tokens = list(users.values_list('fcm_token', flat=True))
-        send_bulk_push(
-            tokens,
-            offer.title,
-            offer.description[:100] if offer.description else 'New offer available!',
-            {'offer_id': str(offer.id)},
-        )
-
+        print(f"[Notifications] Offer #{offer.id}: {len(tokens)} eligible FCM token(s).")
+        if not tokens:
+            print('[Notifications] Offer push skipped because no eligible users have an FCM token.')
         notification = Notification.objects.create(
             title=offer.title,
             body=offer.description[:200] if offer.description else 'New offer available!',
@@ -67,6 +79,19 @@ def activate_scheduled_offers():
             is_active=True,
             created_by=offer.created_by,
         )
+        image_url = notification_image_url(notification)
+        data = {'offer_id': str(offer.id)}
+        if image_url:
+            data['image_url'] = image_url
+        if tokens:
+            send_bulk_push(
+                tokens,
+                offer.title,
+                offer.description[:100] if offer.description else 'New offer available!',
+                data,
+                image_url=image_url,
+            )
+
         if branch_ids:
             notification.target_branches.set(branch_ids)
         for user in users:
@@ -75,7 +100,6 @@ def activate_scheduled_offers():
     return f"Activated {activated_count} scheduled offers"
 
 
-@shared_task
 def deactivate_expired_offers():
     now = timezone.now()
     expired = Offer.objects.filter(is_active=True, end_date__lte=now)

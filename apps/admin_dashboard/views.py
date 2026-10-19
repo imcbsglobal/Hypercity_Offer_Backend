@@ -1,5 +1,6 @@
 from collections import defaultdict
-from datetime import timedelta
+from datetime import datetime, time, timedelta
+from math import ceil
 
 from django.utils import timezone
 from rest_framework import permissions
@@ -70,13 +71,37 @@ class DashboardView(APIView):
     def get(self, request):
         self._auto_update_statuses()
         now = timezone.now()
-        offers = list(self._scoped_offers())
-        branches = list(self._scoped_branches())
+        default_start = _start_of_day(now).replace(day=1)
+        default_end = (default_start + timedelta(days=32)).replace(day=1)
 
-        weekday = now.weekday()
-        week_start = _start_of_day(now) - timedelta(days=weekday)
-        week_end = week_start + timedelta(days=7)
-        prev_start = week_start - timedelta(days=7)
+        def parse_date_param(name, default):
+            value = request.query_params.get(name)
+            if not value:
+                return default
+            try:
+                parsed = datetime.strptime(value, '%Y-%m-%d').date()
+            except ValueError:
+                return None
+            return timezone.make_aware(datetime.combine(parsed, time.min))
+
+        week_start = parse_date_param('start_date', default_start)
+        end_date = parse_date_param('end_date', default_end - timedelta(days=1))
+        if week_start is None or end_date is None:
+            return Response({'detail': 'Dates must use the YYYY-MM-DD format.'}, status=400)
+        # The end date selected in the UI is inclusive, while range checks use
+        # an exclusive end boundary.
+        week_end = end_date + timedelta(days=1)
+        if week_start >= week_end:
+            return Response({'detail': 'The end date must be on or after the start date.'}, status=400)
+
+        all_offers = list(self._scoped_offers())
+        offers = [
+            offer for offer in all_offers
+            if offer.start_date < week_end and offer.end_date > week_start
+        ]
+        branches = list(self._scoped_branches())
+        range_length = week_end - week_start
+        prev_start = week_start - range_length
         prev_end = week_start
 
         def in_range(dt, start, end):
@@ -144,17 +169,26 @@ class DashboardView(APIView):
             },
         ]
 
-        # ---- 7-day overview
+        # ---- date-range overview
+        # Keep the chart readable for long selections by grouping the selected
+        # dates into no more than seven consecutive periods.
         labels, active_series, posts_series = [], [], []
-        for i in range(7):
+        bucket_days = max(1, ceil(range_length.days / 7))
+        for i in range(0, range_length.days, bucket_days):
             day_start = week_start + timedelta(days=i)
-            day_end = day_start + timedelta(days=1)
-            labels.append(day_start.strftime('%b %d'))
+            day_end = min(day_start + timedelta(days=bucket_days), week_end)
+            last_day = day_end - timedelta(days=1)
+            if day_start.date() == last_day.date():
+                labels.append(day_start.strftime('%b %d'))
+            elif day_start.month == last_day.month:
+                labels.append(f'{day_start:%b %d}\u2013{last_day:%d}')
+            else:
+                labels.append(f'{day_start:%b %d}\u2013{last_day:%b %d}')
             active_series.append(
-                sum(1 for o in offers if o.start_date <= day_end and o.end_date >= day_start)
+                sum(1 for o in all_offers if o.start_date < day_end and o.end_date > day_start)
             )
             posts_series.append(
-                sum(1 for o in offers if in_range(o.created_at, day_start, day_end))
+                sum(1 for o in all_offers if in_range(o.created_at, day_start, day_end))
             )
 
         overview = {'labels': labels, 'active': active_series, 'posts': posts_series}

@@ -7,6 +7,5 @@ drf-spectacular
 pillow
 requests
 python-decouple
-celery
 firebase-admin
 psycopg[binary]

@@ -13,6 +13,8 @@ urlpatterns = [
     path('api/offers/', include('apps.offers.urls')),
     path('api/banners/', include('apps.banners.urls')),
     path('api/notifications/', include('apps.notifications.urls')),
+    path('api/custom-forms/', include('apps.custom_forms.urls')),
+    path('api/public/forms/', include('apps.custom_forms.public_urls')),
     path('api/activity-logs/', include('apps.activity_logs.urls')),
     path('api/dashboard/', include('apps.admin_dashboard.urls')),
     path('api/synctool/', include('apps.synctool.urls')),
