@@ -16,7 +16,7 @@ from .serializers import (
     SendOTPSerializer, VerifyOTPSerializer,
     SignupSerializer, UserProfileSerializer,
     AdminLoginSerializer, StaffCreateSerializer, StaffListSerializer,
-    UpdateFCMTokenSerializer
+    UserListSerializer, UpdateFCMTokenSerializer,
 )
 from .permissions import IsSuperAdmin
 from .sms import build_otp_message, is_enabled as sms_enabled, send_sms
@@ -89,6 +89,14 @@ class SendOTPView(APIView):
         serializer = SendOTPSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         phone = _last_ten_digits(serializer.validated_data['phone'])
+        if not phone:
+            return Response({'error': 'Invalid phone number'}, status=status.HTTP_400_BAD_REQUEST)
+
+        if not User.objects.filter(phone=phone).exists():
+            return Response(
+                {'error': 'Account not found. Please signup first.'},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         last_sent = OTP.objects.filter(phone=phone).order_by('-created_at').first()
         if last_sent:
@@ -139,22 +147,21 @@ class VerifyOTPView(APIView):
         phone = _last_ten_digits(serializer.validated_data['phone'])
         otp_code = serializer.validated_data['otp']
 
+        if not phone:
+            return Response({'error': 'Invalid phone number'}, status=status.HTTP_400_BAD_REQUEST)
+
         otp_entry, error = _get_valid_otp(phone, otp_code)
         if error:
             return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
 
-        _consume_otp(otp_entry)
-
-        try:
-            user = User.objects.get(phone=phone)
-        except User.DoesNotExist:
-            user = User.objects.create_user(
-                phone=phone,
-                name='Customer',
-                role='CUSTOMER',
-                is_customer=True,
+        user = User.objects.filter(phone=phone).first()
+        if not user:
+            return Response(
+                {'error': 'Account not found. Please signup first.'},
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
+        _consume_otp(otp_entry)
         return Response(_token_payload(user), status=status.HTTP_200_OK)
 
 
@@ -168,21 +175,23 @@ class SignupView(APIView):
         serializer.is_valid(raise_exception=True)
 
         phone = _last_ten_digits(serializer.validated_data['phone'])
-        otp_code = serializer.validated_data['otp']
-        name = serializer.validated_data['name']
+        first_name = serializer.validated_data['first_name']
+        last_name = serializer.validated_data['last_name']
+        email = serializer.validated_data['email']
+        name = f'{first_name} {last_name}'.strip()
 
-        otp_entry, error = _get_valid_otp(phone, otp_code)
-        if error:
-            return Response({'error': error}, status=status.HTTP_400_BAD_REQUEST)
+        if not phone:
+            return Response({'error': 'Invalid phone number'}, status=status.HTTP_400_BAD_REQUEST)
 
         if User.objects.filter(phone=phone).exists():
             return Response({'error': 'Account already exists. Please login.'}, status=status.HTTP_400_BAD_REQUEST)
 
-        _consume_otp(otp_entry)
-
         user = User.objects.create_user(
             phone=phone,
             name=name,
+            first_name=first_name,
+            last_name=last_name,
+            email=email,
             role='CUSTOMER',
             is_customer=True,
         )
@@ -269,3 +278,12 @@ class StaffViewSet(viewsets.ModelViewSet):
     def perform_destroy(self, instance):
         log_activity(self.request.user, 'DELETE', 'staff', instance.id, instance.name)
         instance.delete()
+
+
+class UserViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = User.objects.all()
+    serializer_class = UserListSerializer
+    permission_classes = [permissions.IsAuthenticated, IsSuperAdmin]
+    filterset_fields = ['role', 'is_customer', 'is_active']
+    search_fields = ['phone', 'name', 'first_name', 'last_name', 'email']
+    ordering_fields = ['date_joined', 'name', 'phone']

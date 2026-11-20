@@ -1,10 +1,11 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from rest_framework_simplejwt.views import TokenRefreshView
-from .views import SendOTPView, VerifyOTPView, SignupView, ProfileView, AdminLoginView, StaffViewSet, UpdateFCMTokenView
+from .views import SendOTPView, VerifyOTPView, SignupView, ProfileView, AdminLoginView, StaffViewSet, UpdateFCMTokenView, UserViewSet
 
 router = DefaultRouter()
 router.register(r'staff', StaffViewSet, basename='staff')
+router.register(r'users', UserViewSet, basename='users')
 
 urlpatterns = [
     path('auth/send-otp/', SendOTPView.as_view(), name='send-otp'),

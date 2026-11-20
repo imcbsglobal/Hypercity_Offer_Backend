@@ -6,6 +6,7 @@ from django.conf import settings
 from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
+from rest_framework.test import APIClient
 
 from apps.accounts.models import OTP, SMSSendLog, User
 from apps.accounts.sms import build_signature
@@ -71,6 +72,10 @@ class SendOTPViewTests(TestCase):
 
     def setUp(self):
         super().setUp()
+        for phone in (PHONE, '9000000001', '9000000002', '9000000003'):
+            User.objects.create_user(
+                phone=phone, name=f'User {phone}', role='CUSTOMER', is_customer=True,
+            )
         self.response = self.client.post(self.url, {'phone': PHONE}, format='json')
         self.assertEqual(self.response.status_code, 200)
         self.entry = OTP.objects.get(phone=PHONE)
@@ -111,10 +116,12 @@ class SendOTPViewTests(TestCase):
         res = self.client.post(self.url, {'phone': PHONE}, format='json')
         self.assertEqual(res.status_code, 200)
 
-    def test_arbitrary_phone_is_allowed(self):
-        res = self.client.post(self.url, {'phone': '9000000002'}, format='json')
-        self.assertEqual(res.status_code, 200)
-        self.assertTrue(OTP.objects.filter(phone='9000000002').exists())
+    def test_unknown_phone_is_rejected_before_otp_created(self):
+        res = self.client.post(self.url, {'phone': '9999999999'}, format='json')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('signup', res.data['error'].lower())
+        self.assertFalse(OTP.objects.filter(phone='9999999999').exists())
+        self.assertFalse(SMSSendLog.objects.filter(phone='9999999999').exists())
 
     def test_invalid_phone_rejected_by_serializer(self):
         res = self.client.post(self.url, {'phone': '123'}, format='json')
@@ -146,6 +153,9 @@ class VerifyOTPViewTests(TestCase):
     def setUp(self):
         super().setUp()
         self.entry = make_otp()
+        User.objects.create_user(
+            phone=PHONE, name='Test User', role='CUSTOMER', is_customer=True,
+        )
 
     def test_valid_code_returns_tokens(self):
         res = self.client.post(self.url, {'phone': PHONE, 'otp': '123456'}, format='json')
@@ -154,12 +164,14 @@ class VerifyOTPViewTests(TestCase):
         self.entry.refresh_from_db()
         self.assertTrue(self.entry.is_used)
 
-    def test_new_phone_gets_auto_created(self):
+    def test_missing_app_user_returns_signup_prompt(self):
+        User.objects.filter(phone=PHONE).delete()
         res = self.client.post(self.url, {'phone': PHONE, 'otp': '123456'}, format='json')
-        self.assertEqual(res.status_code, 200)
-        user = User.objects.get(phone=PHONE)
-        self.assertTrue(user.is_customer)
-        self.assertEqual(user.role, 'CUSTOMER')
+        self.assertEqual(res.status_code, 400)
+        self.assertIn('signup', res.data['error'].lower())
+        self.assertFalse(User.objects.filter(phone=PHONE).exists())
+        self.entry.refresh_from_db()
+        self.assertFalse(self.entry.is_used)
 
     def test_code_cannot_be_replayed(self):
         self.client.post(self.url, {'phone': PHONE, 'otp': '123456'}, format='json')
@@ -201,39 +213,51 @@ class VerifyOTPViewTests(TestCase):
         self.assertEqual(res.status_code, 400)
 
 
-@override_settings(SMS_ENABLED=False, DEBUG=True, SMS_MAX_ATTEMPTS=3)
+@override_settings(SMS_ENABLED=False, DEBUG=True)
 class SignupViewTests(TestCase):
     url = reverse('signup')
 
-    def setUp(self):
-        make_otp()
+    def payload(self, **overrides):
+        data = {
+            'phone': PHONE,
+            'first_name': 'Asha',
+            'last_name': 'Kumar',
+            'email': 'asha@example.com',
+        }
+        data.update(overrides)
+        return data
 
-    def test_signup_creates_customer_with_real_name(self):
-        res = self.client.post(
-            self.url, {'phone': PHONE, 'otp': '123456', 'name': 'Asha'}, format='json'
-        )
+    def test_signup_creates_customer_with_full_details(self):
+        res = self.client.post(self.url, self.payload(), format='json')
         self.assertEqual(res.status_code, 201)
-        self.assertEqual(User.objects.get(phone=PHONE).name, 'Asha')
+        user = User.objects.get(phone=PHONE)
+        self.assertEqual(user.name, 'Asha Kumar')
+        self.assertEqual(user.first_name, 'Asha')
+        self.assertEqual(user.last_name, 'Kumar')
+        self.assertEqual(user.email, 'asha@example.com')
+
+    def test_signup_does_not_need_an_otp_row(self):
+        self.assertFalse(OTP.objects.exists())
+        res = self.client.post(self.url, self.payload(), format='json')
+        self.assertEqual(res.status_code, 201)
+        self.assertFalse(OTP.objects.exists())
 
     def test_existing_user_rejected(self):
         User.objects.create_user(phone=PHONE, name='Existing')
-        res = self.client.post(
-            self.url, {'phone': PHONE, 'otp': '123456', 'name': 'Asha'}, format='json'
-        )
+        res = self.client.post(self.url, self.payload(), format='json')
         self.assertEqual(res.status_code, 400)
         self.assertIn('already exists', res.data['error'])
 
-    def test_invalid_code_rejected(self):
-        res = self.client.post(
-            self.url, {'phone': PHONE, 'otp': '000000', 'name': 'Asha'}, format='json'
-        )
+    def test_blank_first_name_rejected(self):
+        res = self.client.post(self.url, self.payload(first_name='   '), format='json')
         self.assertEqual(res.status_code, 400)
-        self.assertFalse(User.objects.filter(phone=PHONE).exists())
 
-    def test_blank_name_rejected(self):
-        res = self.client.post(
-            self.url, {'phone': PHONE, 'otp': '123456', 'name': '   '}, format='json'
-        )
+    def test_invalid_email_rejected(self):
+        res = self.client.post(self.url, self.payload(email='not-an-email'), format='json')
+        self.assertEqual(res.status_code, 400)
+
+    def test_invalid_phone_rejected_by_serializer(self):
+        res = self.client.post(self.url, self.payload(phone='123'), format='json')
         self.assertEqual(res.status_code, 400)
 
 
@@ -350,3 +374,29 @@ class PurgeOTPCommandTests(TestCase):
         self.assertFalse(OTP.objects.filter(pk=used.pk).exists())
         self.assertFalse(OTP.objects.filter(pk=expired.pk).exists())
         self.assertTrue(OTP.objects.filter(pk=fresh.pk).exists())
+
+
+class UserViewSetTests(TestCase):
+    url = '/api/users/'
+
+    def setUp(self):
+        self.client = APIClient()
+        self.admin = User.objects.create_superuser(
+            phone='9999999999', name='Admin', password='adminpass123',
+        )
+        self.customer = User.objects.create_user(
+            phone=PHONE, name='Test Customer', role='CUSTOMER', is_customer=True,
+        )
+
+    def test_super_admin_can_list_all_users(self):
+        self.client.force_authenticate(self.admin)
+        res = self.client.get(self.url)
+        self.assertEqual(res.status_code, 200)
+        phones = {row['phone'] for row in res.data['results']}
+        self.assertIn(PHONE, phones)
+        self.assertIn('9999999999', phones)
+
+    def test_customer_forbidden(self):
+        self.client.force_authenticate(self.customer)
+        res = self.client.get(self.url)
+        self.assertEqual(res.status_code, 403)

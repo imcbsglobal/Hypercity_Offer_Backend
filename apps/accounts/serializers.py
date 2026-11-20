@@ -19,17 +19,23 @@ class VerifyOTPSerializer(serializers.Serializer):
 
 class SignupSerializer(serializers.Serializer):
     phone = serializers.CharField(max_length=15)
-    otp = serializers.CharField(min_length=6, max_length=6)
-    name = serializers.CharField(max_length=100)
+    first_name = serializers.CharField(max_length=150)
+    last_name = serializers.CharField(max_length=150)
+    email = serializers.EmailField(max_length=254)
 
     def validate_phone(self, value):
         if len(value) < 10:
             raise serializers.ValidationError("Invalid phone number")
         return value
 
-    def validate_name(self, value):
+    def validate_first_name(self, value):
         if not value.strip():
-            raise serializers.ValidationError("Name cannot be empty")
+            raise serializers.ValidationError("First name cannot be empty")
+        return value.strip()
+
+    def validate_last_name(self, value):
+        if not value.strip():
+            raise serializers.ValidationError("Last name cannot be empty")
         return value.strip()
 
 
@@ -62,7 +68,10 @@ class AdminLoginSerializer(serializers.Serializer):
 class UserListSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
-        fields = ['id', 'phone', 'name', 'role', 'is_customer', 'is_active', 'date_joined']
+        fields = [
+            'id', 'phone', 'name', 'first_name', 'last_name', 'email',
+            'role', 'is_customer', 'is_active', 'date_joined',
+        ]
 
 
 class StaffCreateSerializer(serializers.ModelSerializer):

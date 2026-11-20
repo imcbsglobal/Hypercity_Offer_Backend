@@ -20,7 +20,7 @@ POST /api/auth/send-otp/
 ```
 **Auth:** Public
 
-Sends a 6-digit OTP to the customer's registered phone number via the IMCBS SMS API. The number must exist in the ERP customer master (`acc_master_sync.phone2`) - only the last 10 digits are compared.
+Sends a 6-digit OTP to the customer's registered phone number via the IMCBS SMS API. The number must already exist in `accounts_user`; only the last 10 digits are compared. Unknown numbers are rejected before any OTP or SMS log is created.
 
 **Request:**
 ```json
@@ -47,7 +47,7 @@ Sends a 6-digit OTP to the customer's registered phone number via the IMCBS SMS 
 
 ```json
 {
-  "error": "No customer account found with this number. Please contact admin."
+  "error": "Account not found. Please signup first."
 }
 ```
 
@@ -72,7 +72,7 @@ Sends a 6-digit OTP to the customer's registered phone number via the IMCBS SMS 
 POST /api/auth/verify-otp/
 ```
 **Auth:** Public  
-**Note:** A known customer with no user record is auto-created as `CUSTOMER` on first successful verification.
+**Note:** An `accounts_user` record must already exist for the phone. If missing, the API returns `Account not found. Please signup first.` and the OTP is not consumed.
 
 **Request:**
 ```json
@@ -122,6 +122,7 @@ POST /api/auth/verify-otp/
 }
 ```
 
+**Response 503**
 > An OTP is single-use. After `SMS_MAX_ATTEMPTS` (default 5) wrong codes the row is deleted and the number must request a new OTP.
 
 ---
@@ -131,14 +132,15 @@ POST /api/auth/verify-otp/
 POST /api/auth/signup/
 ```
 **Auth:** Public  
-**Note:** For new users only. Existing users should use `/api/auth/verify-otp/` for login.
+**Note:** For new users only. Creates the account directly; no OTP is required. `name` is derived from `first_name` + `last_name`. Existing users should use `/api/auth/verify-otp/` for login.
 
 **Request:**
 ```json
 {
   "phone": "9876543210",
-  "otp": "123456",
-  "name": "John Doe"
+  "first_name": "John",
+  "last_name": "Doe",
+  "email": "john@example.com"
 }
 ```
 
@@ -162,17 +164,6 @@ POST /api/auth/signup/
 {
   "phone": ["Invalid phone number"]
 }
-```
-
-```json
-{
-  "error": "Invalid OTP"
-}
-```
-
-```json
-{
-  "error": "OTP expired"
 ```
 
 ```json
@@ -1090,18 +1081,53 @@ DELETE /api/staff/{id}/
 
 ---
 
+### 8.6 List Account Users
+```
+GET /api/users/
+```
+**Auth:** JWT (Super Admin only)
+
+Lists every `accounts_user` record, including customers and staff, for the admin Customers page.
+
+**Query parameters:** `search`, `role`, `is_customer`, `is_active`, `ordering`, `page`.
+
+**Response 200:**
+```json
+{
+  "count": 1,
+  "next": null,
+  "previous": null,
+  "results": [
+    {
+      "id": 1,
+      "phone": "9876543210",
+      "name": "Asha Kumar",
+      "first_name": "Asha",
+      "last_name": "Kumar",
+      "email": "asha@example.com",
+      "role": "CUSTOMER",
+      "is_customer": true,
+      "is_active": true,
+      "date_joined": "2026-11-20T10:00:00Z"
+    }
+  ]
+}
+```
+
+---
+
 ## Quick Reference
 
 ### Customer App Flow
 ```
 New User:
-1. POST /api/auth/send-otp/        → Send OTP
-2. POST /api/auth/signup/          → Verify OTP + create account → Get JWT
+1. POST /api/auth/signup/          → Create account directly → Get JWT
 
 Existing User:
 1. POST /api/auth/send-otp/        → Send OTP
 2. POST /api/auth/verify-otp/      → Verify OTP → Get JWT
 
+After login:
 3. PUT  /api/profile/              → Save fcm_token for push
 4. GET  /api/banners/              → Load carousel
 5. GET  /api/offers/               → Load offers list
@@ -1114,13 +1140,14 @@ Existing User:
 ```
 1. POST   /api/auth/admin-login/     → Login (phone + password)
 2. GET    /api/staff/                → View staff users
-3. POST   /api/staff/                → Create new staff user
-4. PATCH  /api/staff/{id}/           → Update staff role/branch
-5. DELETE /api/staff/{id}/           → Remove staff user
-6. POST   /api/offers/               → Create offer
-7. POST   /api/notifications/        → Send push notification
-8. POST   /api/banners/              → Create banner
-9. GET    /api/offers/admin_all/     → View all offers
+3. GET    /api/users/                → View customers/account users
+4. POST   /api/staff/                → Create new staff user
+5. PATCH  /api/staff/{id}/           → Update staff role/branch
+6. DELETE /api/staff/{id}/           → Remove staff user
+7. POST   /api/offers/               → Create offer
+8. POST   /api/notifications/        → Send push notification
+9. POST   /api/banners/              → Create banner
+10. GET   /api/offers/admin_all/     → View all offers
 ```
 
 ---

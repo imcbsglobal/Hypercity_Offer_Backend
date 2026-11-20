@@ -87,7 +87,7 @@ backend/
 |--------|----------|------|-------------|
 | POST | `/api/auth/send-otp/` | Public | Send OTP to phone |
 | POST | `/api/auth/verify-otp/` | Public | Login existing user with OTP |
-| POST | `/api/auth/signup/` | Public | Signup new user with OTP + name |
+| POST | `/api/auth/signup/` | Public | Signup new user with phone + name + email (no OTP) |
 | POST | `/api/auth/admin-login/` | Public | Admin login with phone + password |
 | POST | `/api/auth/refresh/` | Public | Refresh JWT token |
 | GET/PUT | `/api/profile/` | JWT | Get/update user profile |
@@ -123,6 +123,11 @@ backend/
 | GET | `/api/notifications/my/` | JWT | My notifications |
 | POST | `/api/notifications/mark_read/` | JWT | Mark notification as read |
 | GET | `/api/notifications/unread_count/` | JWT | Unread notification count |
+
+### Account Users
+| Method | Endpoint | Auth | Description |
+|--------|----------|------|-------------|
+| GET | `/api/users/` | JWT+SuperAdmin | List all `accounts_user` records |
 
 ### Admin
 | Endpoint | Description |
